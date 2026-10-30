@@ -1,0 +1,637 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/*
+ * Copyright (C) 2026, Jayden Milne
+ *
+ * Contrast detection autofocus tests
+ */
+
+#include "../src/ipa/libipa/af_contrast.h"
+
+#include <cmath>
+#include <deque>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <optional>
+#include <stdint.h>
+#include <vector>
+
+#include <linux/v4l2-controls.h>
+
+#include <libcamera/control_ids.h>
+#include <libcamera/controls.h>
+
+#include "test.h"
+
+using namespace std;
+using namespace libcamera;
+using namespace ipa;
+
+namespace {
+
+constexpr unsigned int kGridWidth = 4;
+constexpr unsigned int kGridHeight = 3;
+constexpr unsigned int kStatsInterval = 4;
+
+/* Number of frames between a lens command and the first frame it affects. */
+constexpr unsigned int kLensLatency = 2;
+
+/* The lens map used by the tests: 100 lens units per dioptre. */
+constexpr double kUnitsPerDioptre = 100.0;
+
+const ControlId focusAbsolute(V4L2_CID_FOCUS_ABSOLUTE, "Focus, Absolute",
+			      "v4l2", ControlTypeInteger32,
+			      ControlId::Direction::In);
+const ControlIdMap lensIdMap{ { V4L2_CID_FOCUS_ABSOLUTE, &focusAbsolute } };
+
+void addValue(ValueNode &node, initializer_list<string_view> path, double value)
+{
+	node.add(path, make_unique<ValueNode>(value));
+}
+
+void addValue(ValueNode &node, initializer_list<string_view> path, uint32_t value)
+{
+	node.add(path, make_unique<ValueNode>(value));
+}
+
+unique_ptr<ValueNode> tuning()
+{
+	auto data = make_unique<ValueNode>();
+
+	addValue(*data, { "ranges", "normal", "min" }, 0.0);
+	addValue(*data, { "ranges", "normal", "max" }, 10.0);
+	addValue(*data, { "ranges", "normal", "default" }, 1.0);
+	addValue(*data, { "speeds", "normal", "step_coarse" }, 1.0);
+	addValue(*data, { "speeds", "normal", "step_fine" }, 0.25);
+	addValue(*data, { "speeds", "normal", "contrast_ratio" }, 0.75);
+	addValue(*data, { "speeds", "normal", "retrigger_ratio" }, 0.75);
+	addValue(*data, { "speeds", "normal", "retrigger_delay" }, 8u);
+	addValue(*data, { "speeds", "normal", "max_slew" }, 2.0);
+	addValue(*data, { "speeds", "normal", "step_frames" }, 4u);
+	addValue(*data, { "skip_frames" }, 2u);
+
+	auto map = make_unique<ValueNode>();
+	for (double v : { 0.0, 0.0, 10.0, 10.0 * kUnitsPerDioptre })
+		map->add(make_unique<ValueNode>(v));
+	data->add("map", std::move(map));
+
+	return data;
+}
+
+/*
+ * Simulate a camera with a focus lens in front of a scene. The contrast of
+ * each region follows a peak centred on the subject distance of the region.
+ */
+class Simulator
+{
+public:
+	using Scene = function<double(unsigned int region)>;
+
+	Simulator()
+		: lensControls_({ { &focusAbsolute, ControlInfo(0, 1023, 0) } },
+				lensIdMap)
+	{
+		subject_ = [](unsigned int) { return 5.0; };
+	}
+
+	int init(bool lens)
+	{
+		unique_ptr<ValueNode> data = tuning();
+		ControlInfoMap::Map controls;
+
+		int ret = af_.init(*data, lens ? lensControls_ : ControlInfoMap{},
+				   controls);
+		if (ret)
+			return ret;
+
+		controls_ = std::move(controls);
+
+		return af_.configure(lens ? lensControls_ : ControlInfoMap{},
+				     Size(kGridWidth, kGridHeight),
+				     Rectangle(0, 0, 4000, 3000));
+	}
+
+	void setSubject(Scene subject) { subject_ = std::move(subject); }
+	void setFlat(bool flat) { flat_ = flat; }
+	void setAverage(double average) { average_ = average; }
+
+	/*
+	 * Change the exposure, which scales the average brightness, and scale
+	 * the contrast as noise and clipping would.
+	 */
+	void setExposure(double exposure, double contrastScale = 1.0)
+	{
+		exposure_ = exposure;
+		contrastScale_ = contrastScale;
+	}
+
+	/* Process the statistics of each frame this many frames after its capture. */
+	void setIspLatency(unsigned int frames) { ispLatency_ = frames; }
+
+	/* Restart streaming, the lens stays where it is. */
+	void restart()
+	{
+		frame_ = 0;
+		pending_.clear();
+		commands_ = { { 0, lastSetting_ } };
+	}
+
+	const ControlInfoMap::Map &controls() const { return controls_; }
+
+	/*
+	 * Capture one frame, with optional request controls, and process the
+	 * statistics of the frame captured ispLatency_ frames earlier.
+	 */
+	const ControlList &step(const ControlList &request = ControlList(controls::controls))
+	{
+		af_.queueRequest(request);
+
+		Frame &captured = pending_.emplace_back();
+		captured.frame = frame_;
+		captured.exposure = exposure_;
+		af_.prepare(frame_, captured.context);
+
+		if (frame_ % kStatsInterval == 0) {
+			double position = exposedPosition();
+
+			for (unsigned int i = 0; i < kGridWidth * kGridHeight; i++) {
+				double defocus = position - subject_(i);
+				double contrast = flat_ ? 100.0
+							: 10.0 + 1000.0 * exp(-defocus * defocus / 2.0);
+				captured.stats.push_back({ contrast * contrastScale_,
+							   average_ * exposure_ });
+			}
+		}
+
+		if (pending_.size() > ispLatency_) {
+			const Frame &processed = pending_.front();
+
+			metadata_ = ControlList(controls::controls);
+			af_.process(processed.frame, processed.context,
+				    processed.stats, processed.exposure, metadata_);
+			pending_.pop_front();
+
+			/* The lens moves while the next frame is being captured. */
+			if (optional<int32_t> setting = af_.lensSetting()) {
+				commands_.push_back({ frame_ + kLensLatency, *setting });
+				lastSetting_ = *setting;
+				moves_++;
+			}
+		}
+
+		frame_++;
+
+		return metadata_;
+	}
+
+	/* Run frames until the AF state matches, or the limit is reached. */
+	bool runUntil(int32_t state, unsigned int limit)
+	{
+		for (unsigned int i = 0; i < limit; i++) {
+			if (step().get(controls::AfState) == state)
+				return true;
+		}
+
+		return false;
+	}
+
+	int32_t afState() const { return metadata_.get(controls::AfState).value_or(-1); }
+	int32_t pauseState() const { return metadata_.get(controls::AfPauseState).value_or(-1); }
+	const ControlList &metadata() const { return metadata_; }
+
+	/* The lens position commanded last, in dioptres. */
+	double lensPosition() const { return lastSetting_ / kUnitsPerDioptre; }
+	unsigned int moves() const { return moves_; }
+
+private:
+	struct Command {
+		unsigned int frame;
+		int32_t setting;
+	};
+
+	struct Frame {
+		unsigned int frame;
+		af::FrameContext context;
+		vector<AfContrast::RegionStats> stats;
+		double exposure;
+	};
+
+	/* Lens position, in dioptres, during the exposure of the current frame. */
+	double exposedPosition() const
+	{
+		int32_t setting = 0;
+
+		for (const Command &command : commands_) {
+			if (command.frame <= frame_)
+				setting = command.setting;
+		}
+
+		return setting / kUnitsPerDioptre;
+	}
+
+	ControlInfoMap lensControls_;
+	ControlInfoMap::Map controls_;
+	AfContrast af_;
+
+	Scene subject_;
+	bool flat_ = false;
+	double average_ = 100.0;
+	double exposure_ = 1.0;
+	double contrastScale_ = 1.0;
+
+	unsigned int frame_ = 0;
+	unsigned int ispLatency_ = 0;
+	deque<Frame> pending_;
+	vector<Command> commands_;
+	int32_t lastSetting_ = 0;
+	unsigned int moves_ = 0;
+	ControlList metadata_;
+};
+
+ControlList request()
+{
+	return ControlList(controls::controls);
+}
+
+} /* namespace */
+
+#define EXPECT(cond)                                              \
+	if (!(cond)) {                                            \
+		cerr << __LINE__ << ": " #cond " failed" << endl; \
+		return TestFail;                                  \
+	}
+
+#define EXPECT_NEAR(a, b, eps)                                            \
+	if (fabs((a) - (b)) > (eps)) {                                    \
+		cerr << __LINE__ << ": " #a " = " << (a) << ", expected " \
+		     << (b) << endl;                                      \
+		return TestFail;                                          \
+	}
+
+class AfContrastTest : public Test
+{
+protected:
+	int testNoLens()
+	{
+		Simulator camera;
+		EXPECT(camera.init(false) == 0);
+		EXPECT(camera.controls().empty());
+
+		const ControlList &metadata = camera.step();
+		EXPECT(metadata.get(controls::FocusFoM).has_value());
+		EXPECT(!metadata.get(controls::AfState).has_value());
+		EXPECT(camera.moves() == 0);
+
+		return TestPass;
+	}
+
+	int testManual()
+	{
+		Simulator camera;
+		EXPECT(camera.init(true) == 0);
+		EXPECT(camera.controls().count(&controls::AfMode));
+		EXPECT(camera.controls().count(&controls::LensPosition));
+
+		/* The lens goes to the default position on the first frame. */
+		camera.step();
+		EXPECT(camera.moves() == 1);
+		EXPECT_NEAR(camera.lensPosition(), 1.0, 1e-6);
+		EXPECT(camera.afState() == controls::AfStateIdle);
+
+		/* Manual moves are rate limited to 2 dioptres per frame. */
+		ControlList ctrls = request();
+		ctrls.set(controls::LensPosition, 6.5f);
+		camera.step(ctrls);
+		EXPECT_NEAR(camera.lensPosition(), 3.0, 1e-6);
+
+		for (unsigned int i = 0; i < 4; i++)
+			camera.step();
+		EXPECT_NEAR(camera.lensPosition(), 6.5, 1e-6);
+		EXPECT(camera.afState() == controls::AfStateIdle);
+		EXPECT_NEAR(*camera.metadata().get(controls::LensPosition), 6.5, 1e-6);
+
+		/* Positions are clamped to the lens map. */
+		ctrls = request();
+		ctrls.set(controls::LensPosition, 30.0f);
+		for (unsigned int i = 0; i < 4; i++)
+			camera.step(ctrls);
+		EXPECT_NEAR(camera.lensPosition(), 10.0, 1e-6);
+
+		/* AfTrigger is ignored in manual mode. */
+		ctrls = request();
+		ctrls.set(controls::AfTrigger, controls::AfTriggerStart);
+		camera.step(ctrls);
+		unsigned int moves = camera.moves();
+		for (unsigned int i = 0; i < 20; i++)
+			camera.step();
+		EXPECT(camera.moves() == moves);
+		EXPECT(camera.afState() == controls::AfStateIdle);
+
+		return TestPass;
+	}
+
+	int testAuto()
+	{
+		Simulator camera;
+		EXPECT(camera.init(true) == 0);
+		camera.setSubject([](unsigned int) { return 6.3; });
+
+		ControlList ctrls = request();
+		ctrls.set(controls::AfMode, controls::AfModeAuto);
+		camera.step(ctrls);
+		EXPECT(camera.afState() == controls::AfStateIdle);
+
+		/* Nothing happens until the scan is triggered. */
+		unsigned int moves = camera.moves();
+		for (unsigned int i = 0; i < 20; i++)
+			camera.step();
+		EXPECT(camera.moves() == moves);
+
+		ctrls = request();
+		ctrls.set(controls::AfTrigger, controls::AfTriggerStart);
+		camera.step(ctrls);
+		EXPECT(camera.afState() == controls::AfStateScanning);
+
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+		EXPECT_NEAR(camera.lensPosition(), 6.3, 0.1);
+
+		/* The state and lens position hold until the next trigger. */
+		moves = camera.moves();
+		camera.setSubject([](unsigned int) { return 2.0; });
+		for (unsigned int i = 0; i < 100; i++)
+			camera.step();
+		EXPECT(camera.afState() == controls::AfStateFocused);
+		EXPECT(camera.moves() == moves);
+
+		/* Cancelling a scan stops the lens where it is. */
+		ctrls = request();
+		ctrls.set(controls::AfTrigger, controls::AfTriggerStart);
+		camera.step(ctrls);
+		for (unsigned int i = 0; i < 20; i++)
+			camera.step();
+		EXPECT(camera.afState() == controls::AfStateScanning);
+
+		ctrls = request();
+		ctrls.set(controls::AfTrigger, controls::AfTriggerCancel);
+		camera.step(ctrls);
+		EXPECT(camera.afState() == controls::AfStateIdle);
+		moves = camera.moves();
+		for (unsigned int i = 0; i < 20; i++)
+			camera.step();
+		EXPECT(camera.moves() == moves);
+
+		/* A scene without a contrast peak fails. */
+		camera.setFlat(true);
+		ctrls = request();
+		ctrls.set(controls::AfTrigger, controls::AfTriggerStart);
+		camera.step(ctrls);
+		EXPECT(camera.runUntil(controls::AfStateFailed, 400));
+
+		return TestPass;
+	}
+
+	int testContinuous()
+	{
+		Simulator camera;
+		EXPECT(camera.init(true) == 0);
+		camera.setSubject([](unsigned int) { return 3.7; });
+
+		ControlList ctrls = request();
+		ctrls.set(controls::AfMode, controls::AfModeContinuous);
+		camera.step(ctrls);
+		EXPECT(camera.afState() == controls::AfStateScanning);
+		EXPECT(camera.pauseState() == controls::AfPauseStateRunning);
+
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+		EXPECT_NEAR(camera.lensPosition(), 3.7, 0.1);
+
+		/* A stable scene doesn't trigger a new scan. */
+		unsigned int moves = camera.moves();
+		for (unsigned int i = 0; i < 100; i++)
+			camera.step();
+		EXPECT(camera.moves() == moves);
+
+		/* The subject moves closer, the algorithm refocuses. */
+		camera.setSubject([](unsigned int) { return 7.2; });
+		camera.setAverage(60.0);
+		EXPECT(camera.runUntil(controls::AfStateScanning, 100));
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+		EXPECT_NEAR(camera.lensPosition(), 7.2, 0.1);
+
+		/* An immediate pause stops a scan. */
+		camera.setSubject([](unsigned int) { return 2.0; });
+		camera.setAverage(100.0);
+		EXPECT(camera.runUntil(controls::AfStateScanning, 100));
+		for (unsigned int i = 0; i < 8; i++)
+			camera.step();
+
+		ctrls = request();
+		ctrls.set(controls::AfPause, controls::AfPauseImmediate);
+		camera.step(ctrls);
+		EXPECT(camera.pauseState() == controls::AfPauseStatePaused);
+		moves = camera.moves();
+		for (unsigned int i = 0; i < 50; i++)
+			camera.step();
+		EXPECT(camera.moves() == moves);
+
+		/* Resuming restarts the interrupted scan. */
+		ctrls = request();
+		ctrls.set(controls::AfPause, controls::AfPauseResume);
+		camera.step(ctrls);
+		EXPECT(camera.pauseState() == controls::AfPauseStateRunning);
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+		EXPECT_NEAR(camera.lensPosition(), 2.0, 0.1);
+
+		/* A deferred pause waits for the end of the scan. */
+		camera.setSubject([](unsigned int) { return 5.5; });
+		camera.setAverage(60.0);
+		EXPECT(camera.runUntil(controls::AfStateScanning, 100));
+
+		ctrls = request();
+		ctrls.set(controls::AfPause, controls::AfPauseDeferred);
+		camera.step(ctrls);
+		EXPECT(camera.pauseState() == controls::AfPauseStatePausing);
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+		EXPECT(camera.pauseState() == controls::AfPauseStatePaused);
+		EXPECT_NEAR(camera.lensPosition(), 5.5, 0.1);
+
+		/* Switching to manual stops autofocus without moving the lens. */
+		ctrls = request();
+		ctrls.set(controls::AfMode, controls::AfModeManual);
+		camera.step(ctrls);
+		EXPECT(camera.afState() == controls::AfStateIdle);
+		EXPECT(camera.pauseState() == controls::AfPauseStateRunning);
+		EXPECT_NEAR(camera.lensPosition(), 5.5, 0.1);
+
+		return TestPass;
+	}
+
+	int testExposureChange()
+	{
+		Simulator camera;
+		EXPECT(camera.init(true) == 0);
+		camera.setSubject([](unsigned int) { return 4.5; });
+
+		ControlList ctrls = request();
+		ctrls.set(controls::AfMode, controls::AfModeContinuous);
+		camera.step(ctrls);
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+
+		/*
+		 * The exposure control converges after the scan: the exposure
+		 * doubles in steps of 4%, and noise and clipping take the
+		 * contrast down to 55%. The scene is the same, the lens stays.
+		 */
+		unsigned int moves = camera.moves();
+		for (double exposure = 1.0; exposure < 2.0; exposure *= 1.04) {
+			camera.setExposure(exposure, 1.45 - 0.45 * exposure);
+			for (unsigned int i = 0; i < kStatsInterval; i++)
+				camera.step();
+		}
+		/* It settles, with rounding errors. */
+		for (unsigned int i = 0; i < 100; i++) {
+			camera.setExposure(i / kStatsInterval % 2 ? 2.0 : 2.0001, 0.55);
+			camera.step();
+		}
+		EXPECT(camera.moves() == moves);
+
+		/* A change of brightness alone still triggers a new scan. */
+		camera.setAverage(50.0);
+		EXPECT(camera.runUntil(controls::AfStateScanning, 100));
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+		EXPECT_NEAR(camera.lensPosition(), 4.5, 0.1);
+
+		return TestPass;
+	}
+
+	int testRestart()
+	{
+		Simulator camera;
+		EXPECT(camera.init(true) == 0);
+		camera.setSubject([](unsigned int) { return 4.0; });
+
+		ControlList ctrls = request();
+		ctrls.set(controls::AfMode, controls::AfModeContinuous);
+		camera.step(ctrls);
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+
+		for (unsigned int i = 0; i < 300; i++)
+			camera.step();
+
+		camera.setSubject([](unsigned int) { return 3.0; });
+		camera.setAverage(60.0);
+		EXPECT(camera.runUntil(controls::AfStateScanning, 100));
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+
+		/*
+		 * Frame numbers restart from zero without a new configuration.
+		 * The next scan starts from the current lens position, it must
+		 * not wait for the frame numbers to catch up.
+		 */
+		camera.restart();
+		camera.setSubject([](unsigned int) { return 6.0; });
+		camera.setAverage(100.0);
+		EXPECT(camera.runUntil(controls::AfStateScanning, 100));
+		EXPECT(camera.runUntil(controls::AfStateFocused, 200));
+		EXPECT_NEAR(camera.lensPosition(), 6.0, 0.1);
+
+		return TestPass;
+	}
+
+	int testWindows()
+	{
+		Simulator camera;
+		EXPECT(camera.init(true) == 0);
+
+		/* The left half of the scene is far, the right half close. */
+		camera.setSubject([](unsigned int region) {
+			return region % kGridWidth < kGridWidth / 2 ? 1.5 : 8.0;
+		});
+
+		ControlList ctrls = request();
+		ctrls.set(controls::AfMode, controls::AfModeAuto);
+		ctrls.set(controls::AfMetering, controls::AfMeteringWindows);
+		const Rectangle right(3000, 1000, 1000, 1000);
+		ctrls.set(controls::AfWindows, span<const Rectangle>(&right, 1));
+		ctrls.set(controls::AfTrigger, controls::AfTriggerStart);
+		camera.step(ctrls);
+
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+		EXPECT_NEAR(camera.lensPosition(), 8.0, 0.1);
+
+		const Rectangle left(0, 0, 1000, 3000);
+		ctrls = request();
+		ctrls.set(controls::AfWindows, span<const Rectangle>(&left, 1));
+		ctrls.set(controls::AfTrigger, controls::AfTriggerStart);
+		camera.step(ctrls);
+
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+		EXPECT_NEAR(camera.lensPosition(), 1.5, 0.1);
+
+		return TestPass;
+	}
+
+	int testIspLatency(unsigned int latency)
+	{
+		Simulator camera;
+		EXPECT(camera.init(true) == 0);
+		camera.setIspLatency(latency);
+		camera.setSubject([](unsigned int) { return 6.3; });
+
+		ControlList ctrls = request();
+		ctrls.set(controls::AfMode, controls::AfModeContinuous);
+		camera.step(ctrls);
+
+		EXPECT(camera.runUntil(controls::AfStateFocused, 400));
+		EXPECT_NEAR(camera.lensPosition(), 6.3, 0.1);
+
+		/* The statistics measured during the scan match the settled ones. */
+		unsigned int moves = camera.moves();
+		for (unsigned int i = 0; i < 200; i++)
+			camera.step();
+		EXPECT(camera.afState() == controls::AfStateFocused);
+		EXPECT(camera.moves() == moves);
+
+		return TestPass;
+	}
+
+	int run() override
+	{
+		if (testNoLens() != TestPass)
+			return TestFail;
+
+		if (testManual() != TestPass)
+			return TestFail;
+
+		if (testAuto() != TestPass)
+			return TestFail;
+
+		if (testContinuous() != TestPass)
+			return TestFail;
+
+		if (testExposureChange() != TestPass)
+			return TestFail;
+
+		if (testRestart() != TestPass)
+			return TestFail;
+
+		if (testWindows() != TestPass)
+			return TestFail;
+
+		/*
+		 * A software ISP can process a frame several frames after its
+		 * capture when it falls behind.
+		 */
+		for (unsigned int latency = 1; latency <= 4; latency++) {
+			if (testIspLatency(latency) != TestPass) {
+				cerr << "With an ISP latency of " << latency
+				     << " frames" << endl;
+				return TestFail;
+			}
+		}
+
+		return TestPass;
+	}
+};
+
+TEST_REGISTER(AfContrastTest)

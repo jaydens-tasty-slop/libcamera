@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 libipa_test = [
+    {'name': 'af_contrast', 'sources': ['af_contrast.cpp']},
     {'name': 'fixedpoint', 'sources': ['fixedpoint.cpp']},
     {'name': 'histogram', 'sources': ['histogram.cpp']},
     {'name': 'interpolator', 'sources': ['interpolator.cpp']},
