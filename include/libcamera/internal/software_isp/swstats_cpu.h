@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <array>
 #include <stdint.h>
 #include <vector>
 
@@ -67,7 +68,7 @@ public:
 		    y >= (window_.y + window_.height))
 			return;
 
-		(this->*stats0_)(src, stats_[statsBufferIndex]);
+		(this->*stats0_)(src, y - window_.y, stats_[statsBufferIndex]);
 	}
 
 	void processLine2(uint32_t frame, unsigned int y, const uint8_t *src[], unsigned int statsBufferIndex = 0)
@@ -79,28 +80,30 @@ public:
 		    y >= (window_.y + window_.height))
 			return;
 
-		(this->*stats2_)(src, stats_[statsBufferIndex]);
+		(this->*stats2_)(src, y - window_.y, stats_[statsBufferIndex]);
 	}
 
 	Signal<uint32_t, uint32_t> statsReady;
 
 private:
-	using statsProcessFn = void (SwStatsCpu::*)(const uint8_t *src[], SwIspStats &stats);
+	using statsProcessFn = void (SwStatsCpu::*)(const uint8_t *src[], unsigned int y,
+						    SwIspStats &stats);
 	using processFrameFn = void (SwStatsCpu::*)(MappedFrameBuffer &in);
 
 	int setupStandardBayerOrder(BayerFormat::Order order);
+	SwIspStats::FocusRegion *focusRow(unsigned int y, SwIspStats &stats) const;
 	/* Bayer 8 bpp unpacked */
-	void statsBGGR8Line0(const uint8_t *src[], SwIspStats &stats);
+	void statsBGGR8Line0(const uint8_t *src[], unsigned int y, SwIspStats &stats);
 	/* Bayer 10 bpp unpacked */
-	void statsBGGR10Line0(const uint8_t *src[], SwIspStats &stats);
+	void statsBGGR10Line0(const uint8_t *src[], unsigned int y, SwIspStats &stats);
 	/* Bayer 12 bpp unpacked */
-	void statsBGGR12Line0(const uint8_t *src[], SwIspStats &stats);
+	void statsBGGR12Line0(const uint8_t *src[], unsigned int y, SwIspStats &stats);
 	/* Bayer 10 bpp packed */
-	void statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats);
-	void statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats);
+	void statsBGGR10PLine0(const uint8_t *src[], unsigned int y, SwIspStats &stats);
+	void statsGBRG10PLine0(const uint8_t *src[], unsigned int y, SwIspStats &stats);
 	/* Bayer 12 bpp packed */
-	void statsBGGR12PLine0(const uint8_t *src[], SwIspStats &stats);
-	void statsGBRG12PLine0(const uint8_t *src[], SwIspStats &stats);
+	void statsBGGR12PLine0(const uint8_t *src[], unsigned int y, SwIspStats &stats);
+	void statsGBRG12PLine0(const uint8_t *src[], unsigned int y, SwIspStats &stats);
 
 	void processBayerFrame2(MappedFrameBuffer &in);
 
@@ -114,6 +117,7 @@ private:
 	unsigned int ySkipMask_;
 
 	Rectangle window_;
+	std::array<unsigned int, SwIspStats::kFocusGridWidth> focusColumnEnd_;
 
 	Size patternSize_;
 
