@@ -29,6 +29,10 @@ namespace libcamera {
  *
  * - The variance value for autofocus.
  *
+ * - The focus statistics divide the statistics window in a grid of regions
+ *   and measure the high frequency content of the green channel in each of
+ *   them, for use by contrast detection autofocus algorithms.
+ *
  * The value types are large enough to not overflow. Should they still overflow
  * for some reason, no check is performed and they wrap around.
  */
@@ -62,6 +66,39 @@ struct SwIspStats {
 	 * \brief A variance value for the autofocus algorithm
 	 */
 	double variance;
+	/**
+	 * \brief Number of columns in the focus statistics grid
+	 */
+	static constexpr unsigned int kFocusGridWidth = 8;
+	/**
+	 * \brief Number of rows in the focus statistics grid
+	 */
+	static constexpr unsigned int kFocusGridHeight = 6;
+	/**
+	 * \brief Focus statistics for one region of the grid
+	 *
+	 * The values are scaled to 8 bits per pixel regardless of the input
+	 * format bit depth.
+	 */
+	struct FocusRegion {
+		/**
+		 * \brief Sum of the squared differences between the green
+		 * values of horizontally adjacent samples
+		 */
+		uint64_t contrast;
+		/**
+		 * \brief Sum of the green values of the samples
+		 */
+		uint64_t sum;
+		/**
+		 * \brief Number of samples accumulated in the region
+		 */
+		uint32_t count;
+	};
+	/**
+	 * \brief Focus statistics of the grid regions, in raster scan order
+	 */
+	std::array<FocusRegion, kFocusGridWidth * kFocusGridHeight> focus;
 };
 
 } /* namespace libcamera */

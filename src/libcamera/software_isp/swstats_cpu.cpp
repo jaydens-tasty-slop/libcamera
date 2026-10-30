@@ -11,6 +11,9 @@
 
 #include "libcamera/internal/software_isp/swstats_cpu.h"
 
+#include <algorithm>
+#include <limits>
+
 #include <libcamera/base/log.h>
 
 #include <libcamera/stream.h>
@@ -130,6 +133,8 @@ namespace libcamera {
  * \typedef SwStatsCpu::statsProcessFn
  * \brief Called when there is data to get statistics from
  * \param[in] src The input data
+ * \param[in] y The line number relative to the statistics window
+ * \param[out] stats The statistics buffer to accumulate into
  *
  * These functions take an array of (patternSize_.height + 1) src
  * pointers each pointing to a line in the source image. The middle
@@ -148,6 +153,15 @@ namespace libcamera {
 /**
  * \var Rectangle SwStatsCpu::window_
  * \brief Statistics window, set by setWindow(), used every line
+ */
+
+/**
+ * \var SwStatsCpu::focusColumnEnd_
+ * \brief Index of the first sample on a line past each focus grid column
+ *
+ * Samples are taken every 4 pixels on each line. The last entry is set to
+ * the maximum unsigned int value so that the last column extends to the end
+ * of the line.
  */
 
 /**
@@ -179,16 +193,56 @@ static constexpr unsigned int kRedYMul = 77; /* 0.299 * 256 */
 static constexpr unsigned int kGreenYMul = 150; /* 0.587 * 256 */
 static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
 
-#define SWSTATS_START_LINE_STATS(pixel_t) \
-	pixel_t r, g, g2, b;              \
-	uint64_t yVal;                    \
-                                          \
-	uint64_t sumR = 0;                \
-	uint64_t sumG = 0;                \
-	uint64_t sumB = 0;                \
-	uint64_t nSamples = 0;
+/*
+ * The focus statistics accumulate, for each region of the focus grid, the
+ * squared difference between the green values of horizontally adjacent
+ * samples. As samples are taken 4 pixels apart, the measurement responds most
+ * strongly to detail with a period of 8 pixels. The value is not normalised,
+ * it is up to the IPA to account for the brightness of the region.
+ */
+#define SWSTATS_START_LINE_STATS(pixel_t)                          \
+	pixel_t r, g, g2, b;                                       \
+	uint64_t yVal;                                             \
+                                                                   \
+	uint64_t sumR = 0;                                         \
+	uint64_t sumG = 0;                                         \
+	uint64_t sumB = 0;                                         \
+	uint64_t nSamples = 0;                                     \
+                                                                   \
+	SwIspStats::FocusRegion *focusRegion = focusRow(y, stats); \
+	const unsigned int *focusEnd = focusColumnEnd_.data();     \
+	unsigned int focusSample = 0;                              \
+	uint64_t focusContrast = 0;                                \
+	uint64_t focusSum = 0;                                     \
+	uint32_t focusCount = 0;                                   \
+	pixel_t gPrev = 0;
+
+#define SWSTATS_FLUSH_FOCUS_STATS()             \
+	focusRegion->contrast += focusContrast; \
+	focusRegion->sum += focusSum;           \
+	focusRegion->count += focusCount;       \
+	focusContrast = 0;                      \
+	focusSum = 0;                           \
+	focusCount = 0;
+
+#define SWSTATS_ACCUMULATE_FOCUS_STATS()      \
+	while (focusSample == *focusEnd) {    \
+		SWSTATS_FLUSH_FOCUS_STATS()   \
+		focusRegion++;                \
+		focusEnd++;                   \
+	}                                     \
+                                              \
+	if (focusSample++) {                  \
+		int32_t diff = g - gPrev;     \
+		focusContrast += diff * diff; \
+	}                                     \
+	focusSum += g;                        \
+	focusCount++;                         \
+	gPrev = g;
 
 #define SWSTATS_ACCUMULATE_LINE_STATS(div)      \
+	SWSTATS_ACCUMULATE_FOCUS_STATS()        \
+                                                \
 	if (r < kSaturationThreshold * (div) && \
 	    g < kSaturationThreshold * (div) && \
 	    b < kSaturationThreshold * (div)) { \
@@ -204,12 +258,23 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
 	stats.yHistogram[yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div))]++;
 
 #define SWSTATS_FINISH_LINE_STATS() \
+	SWSTATS_FLUSH_FOCUS_STATS() \
+                                    \
 	stats.sum_.r() += sumR;     \
 	stats.sum_.g() += sumG;     \
 	stats.sum_.b() += sumB;     \
 	stats.numPixels_ += nSamples;
 
-void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[], SwIspStats &stats)
+SwIspStats::FocusRegion *SwStatsCpu::focusRow(unsigned int y, SwIspStats &stats) const
+{
+	unsigned int row = y * SwIspStats::kFocusGridHeight / window_.height;
+
+	row = std::min(row, SwIspStats::kFocusGridHeight - 1);
+
+	return &stats.focus[row * SwIspStats::kFocusGridWidth];
+}
+
+void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[], unsigned int y, SwIspStats &stats)
 {
 	const uint8_t *src0 = src[1] + window_.x;
 	const uint8_t *src1 = src[2] + window_.x;
@@ -234,7 +299,7 @@ void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[], SwIspStats &stats)
 	SWSTATS_FINISH_LINE_STATS()
 }
 
-void SwStatsCpu::statsBGGR10Line0(const uint8_t *src[], SwIspStats &stats)
+void SwStatsCpu::statsBGGR10Line0(const uint8_t *src[], unsigned int y, SwIspStats &stats)
 {
 	const uint16_t *src0 = (const uint16_t *)src[1] + window_.x;
 	const uint16_t *src1 = (const uint16_t *)src[2] + window_.x;
@@ -260,7 +325,7 @@ void SwStatsCpu::statsBGGR10Line0(const uint8_t *src[], SwIspStats &stats)
 	SWSTATS_FINISH_LINE_STATS()
 }
 
-void SwStatsCpu::statsBGGR12Line0(const uint8_t *src[], SwIspStats &stats)
+void SwStatsCpu::statsBGGR12Line0(const uint8_t *src[], unsigned int y, SwIspStats &stats)
 {
 	const uint16_t *src0 = (const uint16_t *)src[1] + window_.x;
 	const uint16_t *src1 = (const uint16_t *)src[2] + window_.x;
@@ -286,7 +351,7 @@ void SwStatsCpu::statsBGGR12Line0(const uint8_t *src[], SwIspStats &stats)
 	SWSTATS_FINISH_LINE_STATS()
 }
 
-void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
+void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], unsigned int y, SwIspStats &stats)
 {
 	const uint8_t *src0 = src[1] + window_.x * 5 / 4;
 	const uint8_t *src1 = src[2] + window_.x * 5 / 4;
@@ -312,7 +377,7 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats)
 	SWSTATS_FINISH_LINE_STATS()
 }
 
-void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
+void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], unsigned int y, SwIspStats &stats)
 {
 	const uint8_t *src0 = src[1] + window_.x * 5 / 4;
 	const uint8_t *src1 = src[2] + window_.x * 5 / 4;
@@ -338,7 +403,7 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats)
 	SWSTATS_FINISH_LINE_STATS()
 }
 
-void SwStatsCpu::statsBGGR12PLine0(const uint8_t *src[], SwIspStats &stats)
+void SwStatsCpu::statsBGGR12PLine0(const uint8_t *src[], unsigned int y, SwIspStats &stats)
 {
 	const uint8_t *src0 = src[1] + window_.x * 3 / 2;
 	const uint8_t *src1 = src[2] + window_.x * 3 / 2;
@@ -364,7 +429,7 @@ void SwStatsCpu::statsBGGR12PLine0(const uint8_t *src[], SwIspStats &stats)
 	SWSTATS_FINISH_LINE_STATS()
 }
 
-void SwStatsCpu::statsGBRG12PLine0(const uint8_t *src[], SwIspStats &stats)
+void SwStatsCpu::statsGBRG12PLine0(const uint8_t *src[], unsigned int y, SwIspStats &stats)
 {
 	const uint8_t *src0 = src[1] + window_.x * 3 / 2;
 	const uint8_t *src1 = src[2] + window_.x * 3 / 2;
@@ -409,6 +474,7 @@ void SwStatsCpu::startFrame(uint32_t frame)
 		s.numPixels_ = 0;
 		s.variance = 0.0;
 		s.yHistogram.fill(0);
+		s.focus.fill({});
 	}
 }
 
@@ -428,15 +494,25 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
 		sharedStats_->numPixels_ = 0;
 		sharedStats_->variance = 0.0;
 		sharedStats_->yHistogram.fill(0);
+		sharedStats_->focus.fill({});
 		for (const auto &s : stats_) {
 			sharedStats_->sum_ += s.sum_;
 			sharedStats_->numPixels_ += s.numPixels_;
 			sharedStats_->variance += s.variance;
 			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
 				sharedStats_->yHistogram[j] += s.yHistogram[j];
+			for (unsigned int j = 0; j < s.focus.size(); j++) {
+				sharedStats_->focus[j].contrast += s.focus[j].contrast;
+				sharedStats_->focus[j].sum += s.focus[j].sum;
+				sharedStats_->focus[j].count += s.focus[j].count;
+			}
 		}
 
 		sharedStats_->sum_ >>= sumShift_;
+		for (auto &region : sharedStats_->focus) {
+			region.contrast >>= 2 * sumShift_;
+			region.sum >>= sumShift_;
+		}
 	}
 
 	sharedStats_->valid = valid;
@@ -591,6 +667,12 @@ void SwStatsCpu::setWindow(const Rectangle &window)
 	window_.width = (window_.width > xShift_ ? window_.width - xShift_ : 0);
 	window_.width &= ~(patternSize_.width - 1);
 	window_.height &= ~(patternSize_.height - 1);
+
+	/* Line functions take one sample every 4 pixels. */
+	const unsigned int samples = (window_.width + 3) / 4;
+	for (unsigned int i = 0; i < focusColumnEnd_.size() - 1; i++)
+		focusColumnEnd_[i] = (i + 1) * samples / SwIspStats::kFocusGridWidth;
+	focusColumnEnd_.back() = std::numeric_limits<unsigned int>::max();
 }
 
 void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
@@ -610,7 +692,7 @@ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
 		/* linePointers[0] is not used by any stats0_ functions */
 		linePointers[1] = src;
 		linePointers[2] = src + stride_;
-		(this->*stats0_)(linePointers, stats_[0]);
+		(this->*stats0_)(linePointers, y, stats_[0]);
 		src += stride_ * 2;
 	}
 }
