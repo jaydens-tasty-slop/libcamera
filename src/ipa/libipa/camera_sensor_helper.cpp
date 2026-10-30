@@ -887,6 +887,19 @@ public:
 };
 REGISTER_CAMERA_SENSOR_HELPER("ov13858", CameraSensorHelperOv13858)
 
+class CameraSensorHelperS5k5e3 : public CameraSensorHelper
+{
+public:
+	CameraSensorHelperS5k5e3()
+	{
+		/* 0x40 at 10bits. */
+		blackLevel_ = 4096;
+		/* Analogue gain code is linear with 32 for unity gain. */
+		gain_ = AnalogueGainLinear{ 1, 0, 0, 32 };
+	}
+};
+REGISTER_CAMERA_SENSOR_HELPER("s5k5e3", CameraSensorHelperS5k5e3)
+
 class CameraSensorHelperVd55g1 : public CameraSensorHelper
 {
 public:
