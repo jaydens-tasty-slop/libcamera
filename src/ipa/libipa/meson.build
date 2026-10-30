@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 libipa_headers = files([
+    'af_contrast.h',
     'agc.h',
     'agc_mean_luminance.h',
     'agc_msv.h',
@@ -30,6 +31,7 @@ libipa_headers = files([
 ])
 
 libipa_sources = files([
+    'af_contrast.cpp',
     'agc.cpp',
     'agc_mean_luminance.cpp',
     'agc_msv.cpp',
