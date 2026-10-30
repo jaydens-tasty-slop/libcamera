@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: CC0-1.0
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+      blackLevel: 4096
+  - Awb:
+  - Adjust:
+  - Agc:
+  - Af:
+      ranges:
+        normal:
+          min: 0.0
+          max: 10.0
+          default: 1.0
+        macro:
+          min: 3.0
+          max: 10.0
+          default: 5.0
+      speeds:
+        normal:
+          step_coarse: 1.0
+          step_fine: 0.25
+          contrast_ratio: 0.75
+          retrigger_ratio: 0.75
+          retrigger_delay: 12
+          max_slew: 2.0
+          step_frames: 4
+        fast:
+          step_coarse: 1.5
+          step_fine: 0.0
+          contrast_ratio: 0.75
+          retrigger_ratio: 0.75
+          retrigger_delay: 8
+          max_slew: 4.0
+          step_frames: 4
+      skip_frames: 5
+      # Lens positions in dioptres to focus lens driver units. This linear
+      # map over the full range of the voice coil motor driver has not been
+      # calibrated and needs to be measured on the module.
+      map: [ 0.0, 0, 10.0, 1023 ]
+...
