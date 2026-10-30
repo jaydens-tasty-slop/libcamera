@@ -6,6 +6,7 @@
  */
 
 #include <chrono>
+#include <optional>
 #include <stdint.h>
 #include <sys/mman.h>
 
@@ -57,6 +58,7 @@ public:
 		 const SharedFD &fdParams,
 		 const IPACameraSensorInfo &sensorInfo,
 		 const ControlInfoMap &sensorControls,
+		 const ControlInfoMap &lensControls,
 		 ControlInfoMap *ipaControls,
 		 bool *ccmEnabled,
 		 bool *lscEnabled) override;
@@ -97,6 +99,7 @@ int IPASoftIsp::init(const IPASettings &settings,
 		     const SharedFD &fdParams,
 		     const IPACameraSensorInfo &sensorInfo,
 		     const ControlInfoMap &sensorControls,
+		     const ControlInfoMap &lensControls,
 		     ControlInfoMap *ipaControls,
 		     bool *ccmEnabled,
 		     bool *lscEnabled)
@@ -110,6 +113,7 @@ int IPASoftIsp::init(const IPASettings &settings,
 
 	context_.sensorInfo = sensorInfo;
 	context_.sensorControls = sensorControls;
+	context_.lensControls = lensControls;
 
 	/* Load the tuning data file */
 	File file(settings.configurationFile);
@@ -192,6 +196,7 @@ int IPASoftIsp::init(const IPASettings &settings,
 int IPASoftIsp::configure(const IPAConfigInfo &configInfo, ControlInfoMap *ipaControls)
 {
 	context_.sensorControls = configInfo.sensorControls;
+	context_.lensControls = configInfo.lensControls;
 
 	/* Clear the IPA context before the streaming session. */
 	context_.configuration = {};
@@ -256,7 +261,16 @@ void IPASoftIsp::processStats(const uint32_t frame,
 	ControlList ctrls(context_.sensorControls);
 	agc::prepareControls(ctrls, context_.camHelper.get(),
 			     frameContext.agc.exposure, frameContext.agc.gain);
-	setSensorControls.emit(ctrls);
+
+	ControlList lensCtrls;
+	std::optional<int32_t> &focusPosition = context_.activeState.lens.focusPosition;
+	if (focusPosition) {
+		lensCtrls = ControlList(context_.lensControls);
+		lensCtrls.set(V4L2_CID_FOCUS_ABSOLUTE, *focusPosition);
+		focusPosition.reset();
+	}
+
+	setSensorControls.emit(ctrls, lensCtrls);
 }
 
 std::string IPASoftIsp::logPrefix() const

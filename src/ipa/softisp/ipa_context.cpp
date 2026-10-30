@@ -48,6 +48,10 @@ namespace libcamera::ipa::softisp {
  *
  * \var IPAContext::activeState
  * \brief The current state of IPA algorithms
+ *
+ * \var IPAContext::lensControls
+ * \brief The V4L2 controls of the focus lens, empty if the camera has no
+ * controllable focus lens
  */
 
 /**
@@ -97,6 +101,17 @@ namespace libcamera::ipa::softisp {
  *
  * \var IPAActiveState::gamma.blackLevel
  * \brief Black level used for the gamma table computation
+ */
+
+/**
+ * \var IPAActiveState::lens
+ * \brief Focus lens state
+ *
+ * \var IPAActiveState::lens.focusPosition
+ * \brief Focus lens position to apply, in lens driver units
+ *
+ * Algorithms set the position when the lens has to move. The value is reset
+ * once the lens control has been sent to the pipeline handler.
  */
 
 } /* namespace libcamera::ipa::softisp */

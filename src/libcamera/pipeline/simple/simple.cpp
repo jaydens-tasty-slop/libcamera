@@ -34,6 +34,7 @@
 #include <libcamera/stream.h>
 
 #include "libcamera/internal/camera.h"
+#include "libcamera/internal/camera_lens.h"
 #include "libcamera/internal/camera_manager.h"
 #include "libcamera/internal/camera_sensor.h"
 #include "libcamera/internal/camera_sensor_properties.h"
@@ -374,7 +375,8 @@ private:
 
 	void ispStatsReady(uint32_t frame, uint32_t bufferId);
 	void metadataReady(uint32_t frame, const ControlList &metadata);
-	void setSensorControls(const ControlList &sensorControls);
+	void setSensorControls(const ControlList &sensorControls,
+			       const ControlList &lensControls);
 };
 
 class SimpleCameraConfiguration : public CameraConfiguration
@@ -1046,8 +1048,20 @@ void SimpleCameraData::metadataReady(uint32_t frame, const ControlList &metadata
 	tryCompleteRequest(info->request);
 }
 
-void SimpleCameraData::setSensorControls(const ControlList &sensorControls)
+void SimpleCameraData::setSensorControls(const ControlList &sensorControls,
+					 const ControlList &lensControls)
 {
+	/*
+	 * Move the focus lens straight away. Lens movements are not frame
+	 * synchronised, the IPA accounts for the time the lens takes to
+	 * settle.
+	 */
+	CameraLens *lens = sensor_->focusLens();
+	if (lens && lensControls.contains(V4L2_CID_FOCUS_ABSOLUTE)) {
+		const ControlValue &focus = lensControls.get(V4L2_CID_FOCUS_ABSOLUTE);
+		lens->setFocusPosition(focus.get<int32_t>());
+	}
+
 	delayedCtrls_->push(sensorControls);
 	/*
 	 * Directly apply controls now if there is no frameStart signal.
@@ -1652,6 +1666,8 @@ int SimplePipelineHandler::configure(Camera *camera, CameraConfiguration *c)
 	} else {
 		ipa::softisp::IPAConfigInfo configInfo;
 		configInfo.sensorControls = data->sensor_->controls();
+		if (CameraLens *lens = data->sensor_->focusLens())
+			configInfo.lensControls = lens->controls();
 		return data->swIsp_->configure(inputCfg, outputCfgs, configInfo, &data->controlInfo_);
 	}
 }

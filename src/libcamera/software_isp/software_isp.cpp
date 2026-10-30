@@ -24,6 +24,7 @@
 #include <libcamera/stream.h>
 
 #include "libcamera/internal/bayer_format.h"
+#include "libcamera/internal/camera_lens.h"
 #include "libcamera/internal/framebuffer.h"
 #include "libcamera/internal/software_isp/debayer_params.h"
 
@@ -68,8 +69,12 @@ LOG_DEFINE_CATEGORY(SoftwareIsp)
 
 /**
  * \var SoftwareIsp::setSensorControls
- * \brief A signal emitted when the values to write to the sensor controls are
- * ready
+ * \brief A signal emitted when the values to write to the sensor and lens
+ * controls are ready
+ *
+ * The first argument holds the sensor controls and the second one the focus
+ * lens controls. The lens controls list is empty when the lens position
+ * doesn't need to change.
  */
 
 /**
@@ -78,7 +83,7 @@ LOG_DEFINE_CATEGORY(SoftwareIsp)
  * \param[in] sensor Pointer to the CameraSensor instance owned by the pipeline handler
  * \param[out] ipaControls The IPA controls to update
  */
-SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
+SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, CameraSensor *sensor,
 			 ControlInfoMap *ipaControls)
 	: ispWorkerThread_("SWIspWorker"),
 	  dmaHeap_(DmaBufAllocator::DmaBufAllocatorFlag::CmaHeap |
@@ -157,11 +162,14 @@ SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
 		return;
 	}
 
+	CameraLens *lens = sensor->focusLens();
+
 	ret = ipa_->init(IPASettings{ ipaTuningFile, sensor->model() },
 			 debayer_->getStatsFD(),
 			 sharedParams_.fd(),
 			 sensorInfo,
 			 sensor->controls(),
+			 lens ? lens->controls() : ControlInfoMap{},
 			 ipaControls,
 			 &ccmEnabled_,
 			 &lscEnabled_);
@@ -443,9 +451,10 @@ void SoftwareIsp::saveIspParams([[maybe_unused]] uint32_t frame)
 	debayerParams_ = *sharedParams_;
 }
 
-void SoftwareIsp::setSensorCtrls(const ControlList &sensorControls)
+void SoftwareIsp::setSensorCtrls(const ControlList &sensorControls,
+				 const ControlList &lensControls)
 {
-	setSensorControls.emit(sensorControls);
+	setSensorControls.emit(sensorControls, lensControls);
 }
 
 void SoftwareIsp::statsReady(uint32_t frame, uint32_t bufferId)

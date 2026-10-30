@@ -58,6 +58,10 @@ struct IPAActiveState {
 	} knobs;
 
 	ipa::lsc::ActiveState lsc;
+
+	struct {
+		std::optional<int32_t> focusPosition;
+	} lens;
 };
 
 struct IPAFrameContext : public FrameContext {
@@ -84,6 +88,7 @@ struct IPAContext {
 
 	IPACameraSensorInfo sensorInfo;
 	ControlInfoMap sensorControls;
+	ControlInfoMap lensControls;
 	std::unique_ptr<CameraSensorHelper> camHelper;
 	IPASessionConfiguration configuration;
 	IPAActiveState activeState;
