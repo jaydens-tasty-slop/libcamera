@@ -16,4 +16,7 @@ algorithms:
   #                0, 0, 1]
   - Adjust:
   - Agc:
+  # Autofocus only drives the lens of cameras that have one. Without a lens
+  # map, lens positions in dioptres are uncalibrated.
+  - Af:
 ...

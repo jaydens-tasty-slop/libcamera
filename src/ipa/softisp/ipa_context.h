@@ -17,6 +17,7 @@
 #include "libcamera/internal/matrix.h"
 #include "libcamera/internal/vector.h"
 
+#include <libipa/af_contrast.h>
 #include <libipa/agc.h>
 #include <libipa/awb.h>
 #include <libipa/camera_sensor_helper.h>
@@ -65,6 +66,7 @@ struct IPAActiveState {
 };
 
 struct IPAFrameContext : public FrameContext {
+	ipa::af::FrameContext af;
 	ipa::awb::FrameContext awb;
 	ipa::ccm::FrameContext ccm;
 	ipa::agc::FrameContext agc;
