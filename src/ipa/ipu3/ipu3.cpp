@@ -555,8 +555,7 @@ void IPAIPU3::setControls(unsigned int frame)
 			     frameContext.agc.exposure, frameContext.agc.gain);
 
 	ControlList lensCtrls(lensCtrls_);
-	lensCtrls.set(V4L2_CID_FOCUS_ABSOLUTE,
-		      static_cast<int32_t>(context_.activeState.af.focus));
+	af::prepareControls(lensCtrls, context_.activeState.af.focus);
 
 	setSensorControls.emit(frame, ctrls, lensCtrls);
 }

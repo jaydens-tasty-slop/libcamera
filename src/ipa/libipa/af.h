@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <linux/v4l2-controls.h>
+
 #include <libcamera/base/log.h>
 
 #include <libcamera/control_ids.h>
@@ -24,6 +26,11 @@ struct ActiveState {
 	double maxVariance;
 	bool stable;
 };
+
+inline void prepareControls(ControlList &controls, int32_t focus)
+{
+	controls.set(V4L2_CID_FOCUS_ABSOLUTE, focus);
+}
 
 } /* namespace af */
 
