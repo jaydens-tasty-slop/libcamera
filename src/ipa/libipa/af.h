@@ -12,6 +12,7 @@
 #include <libcamera/base/log.h>
 
 #include <libcamera/control_ids.h>
+#include <libcamera/controls.h>
 
 namespace libcamera {
 
@@ -39,7 +40,7 @@ class AfAlgorithm
 public:
 	AfAlgorithm();
 
-	void configure(af::ActiveState &state);
+	void configure(af::ActiveState &state, const ControlInfoMap &lensControls);
 	void process(af::ActiveState &state, double variance);
 	bool coarseCompleted() { return coarseCompleted_; }
 
@@ -65,6 +66,8 @@ private:
 	double previousVariance_;
 	/* The designated maximum range of focus scanning. */
 	uint32_t maxStep_;
+	/* Initial value of maxStep_ */
+	uint32_t initMaxStep_;
 	/* If the coarse scan completes, it is set to true. */
 	bool coarseCompleted_;
 	/* If the fine scan completes, it is set to true. */

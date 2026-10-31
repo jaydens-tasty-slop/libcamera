@@ -7,6 +7,8 @@
 
 #include "af.h"
 
+#include <linux/v4l2-controls.h>
+
 namespace libcamera {
 
 namespace ipa {
@@ -40,8 +42,7 @@ namespace af {
  */
 
 /**
- * Maximum focus steps of the VCM control
- * \todo should be obtained from the VCM driver
+ * Default maximum focus steps of the VCM control
  */
 static constexpr uint32_t kMaxFocusSteps = 1023;
 
@@ -135,7 +136,7 @@ void AfAlgorithm::afReset(af::ActiveState &state)
 	previousVariance_ = 0.0;
 	coarseCompleted_ = false;
 	fineCompleted_ = false;
-	maxStep_ = kMaxFocusSteps;
+	maxStep_ = initMaxStep_;
 }
 
 /**
@@ -244,14 +245,15 @@ bool AfAlgorithm::afIsOutOfFocus(af::ActiveState &state)
 /**
  * \brief Configure the algorithm and \a state
  * \param[in] state The autofocus state
+ * \param[in] lensControls The lens controls
  *
  * The method just sets some initial variable values rather than performing real
  * configuration but it is supposed to be called from IPA's `configure`.
  */
-void AfAlgorithm::configure(af::ActiveState &state)
+void AfAlgorithm::configure(af::ActiveState &state, const ControlInfoMap &lensControls)
 {
 	/* Initial max focus step */
-	maxStep_ = kMaxFocusSteps;
+	initMaxStep_ = kMaxFocusSteps;
 
 	/* Initial frame ignore counter */
 	afIgnoreFrameReset();
@@ -262,6 +264,20 @@ void AfAlgorithm::configure(af::ActiveState &state)
 	state.maxVariance = 0;
 	/* The stable AF value flag. if it is true, the AF should be in a stable state. */
 	state.stable = false;
+
+	const auto it = lensControls.find(V4L2_CID_FOCUS_ABSOLUTE);
+	if (it != lensControls.end()) {
+		const ControlInfo &focusInfo = it->second;
+		if (!focusInfo.max().isNone())
+			initMaxStep_ = static_cast<uint32_t>(focusInfo.max().get<int32_t>());
+		if (!focusInfo.def().isNone())
+			state.focus = static_cast<uint32_t>(focusInfo.def().get<int32_t>());
+	}
+
+	maxStep_ = initMaxStep_;
+
+	LOG(Af, Debug) << "Configured focus parameters: max=" << initMaxStep_
+		       << " focus=" << state.focus;
 }
 
 /**

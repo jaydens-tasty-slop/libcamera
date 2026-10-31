@@ -141,7 +141,7 @@ int Af::configure(IPAContext &context, const IPAConfigInfo &configInfo)
 	grid.y_start = utils::alignDown(start.y, 2);
 	grid.y_start |= IPU3_UAPI_GRID_Y_START_EN;
 
-	afAlgo_.configure(context.activeState.af);
+	afAlgo_.configure(context.activeState.af, configInfo.lensControls);
 
 	return 0;
 }

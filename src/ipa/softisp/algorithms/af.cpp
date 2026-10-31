@@ -27,10 +27,9 @@ int Af::init(IPAContext &context, [[maybe_unused]] const ValueNode &tuningData)
 	return 0;
 }
 
-int Af::configure(IPAContext &context,
-		  [[maybe_unused]] const IPAConfigInfo &configInfo)
+int Af::configure(IPAContext &context, const IPAConfigInfo &configInfo)
 {
-	afAlgo_.configure(context.activeState.af);
+	afAlgo_.configure(context.activeState.af, configInfo.lensControls);
 
 	return 0;
 }
