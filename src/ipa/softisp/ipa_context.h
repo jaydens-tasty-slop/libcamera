@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <array>
 #include <memory>
 #include <optional>
 #include <stdint.h>
@@ -15,7 +14,6 @@
 #include <libcamera/controls.h>
 
 #include "libcamera/internal/matrix.h"
-#include "libcamera/internal/vector.h"
 
 #include <libipa/agc.h>
 #include <libipa/awb.h>
