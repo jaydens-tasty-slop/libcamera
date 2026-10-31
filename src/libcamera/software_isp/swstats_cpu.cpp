@@ -398,7 +398,7 @@ void SwStatsCpu::statsGBRG12PLine0(const uint8_t *src[], SwIspStats &stats)
  */
 void SwStatsCpu::startFrame(uint32_t frame)
 {
-	if (frame % kStatPerNumFrames)
+	if (!updating(frame))
 		return;
 
 	if (window_.width == 0)
@@ -420,7 +420,7 @@ void SwStatsCpu::startFrame(uint32_t frame)
  */
 void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
 {
-	bool valid = frame % kStatPerNumFrames == 0;
+	bool valid = updating(frame);
 
 	if (valid) {
 		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
@@ -622,7 +622,7 @@ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
  */
 void SwStatsCpu::processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input)
 {
-	if (frame % kStatPerNumFrames) {
+	if (!updating(frame)) {
 		finishFrame(frame, bufferId);
 		return;
 	}
@@ -632,6 +632,16 @@ void SwStatsCpu::processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuff
 	(this->*processFrame_)(input);
 	finishFrame(frame, bufferId);
 	bench_.finishFrame();
+}
+
+/**
+ * \brief Determine whether stats update is required for the given frame
+ * \param[in] frame The frame number
+ * \return Whether the stats are updated for the given frame
+ */
+bool SwStatsCpu::updating(uint32_t frame)
+{
+	return frame % kStatPerNumFrames == 0;
 }
 
 } /* namespace libcamera */

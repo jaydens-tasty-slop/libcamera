@@ -646,9 +646,7 @@ void DebayerEGL::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
 	metadata.planes()[0].bytesused = output->planes()[0].length;
 
 	/* Calculate stats for the whole frame */
-	if (frame % SwStatsCpu::kStatPerNumFrames) {
-		stats_->finishFrame(frame, 0);
-	} else {
+	if (stats_->updating(frame)) {
 		if (!inMapped) {
 			/*
 			 * The buffer was directly imported into EGL and thus
@@ -660,6 +658,8 @@ void DebayerEGL::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
 			inMapped.emplace(input, MappedFrameBuffer::MapFlag::Read);
 		}
 		stats_->processFrame(frame, 0, inMapped.value());
+	} else {
+		stats_->finishFrame(frame, 0);
 	}
 	inDmaSyncer.reset();
 
