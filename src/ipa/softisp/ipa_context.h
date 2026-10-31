@@ -20,6 +20,7 @@
 #include <libipa/camera_sensor_helper.h>
 #include <libipa/ccm.h>
 #include <libipa/fc_queue.h>
+#include "libipa/af.h"
 #include "libipa/lsc.h"
 
 #include "core_ipa_interface.h"
@@ -39,6 +40,7 @@ struct IPAActiveState {
 	ipa::awb::ActiveState awb;
 	ipa::ccm::ActiveState ccm;
 	ipa::agc::ActiveState agc;
+	ipa::af::ActiveState af;
 
 	struct {
 		uint8_t level;
@@ -88,6 +90,7 @@ struct IPAContext {
 	FCQueue<IPAFrameContext> frameContexts;
 	ControlInfoMap::Map ctrlMap;
 	bool ccmEnabled = false;
+	bool afEnabled = false;
 	bool lscEnabled = false;
 	ipa::lsc::ActiveState lsc;
 };
