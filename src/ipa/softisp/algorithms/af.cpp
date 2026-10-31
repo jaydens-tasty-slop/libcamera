@@ -7,7 +7,12 @@
 
 #include "af.h"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <stdint.h>
+
+#include <linux/v4l2-controls.h>
 
 #include <libcamera/base/log.h>
 
@@ -30,16 +35,14 @@ static constexpr double kMinLevel = 4.0;
 /* Scale applied to the normalised contrast, so that the values are readable. */
 static constexpr double kContrastScale = 1e6;
 
-int Af::init(IPAContext &context, [[maybe_unused]] const ValueNode &tuningData)
-{
-	/* Informs that lens controls can get focus data */
-	context.afEnabled = true;
-
-	return 0;
-}
-
 int Af::configure(IPAContext &context, const IPAConfigInfo &configInfo)
 {
+	/*
+	 * Without a focus lens, only report how sharp the frames are, which
+	 * still helps to focus a lens by hand.
+	 */
+	context.afEnabled = configInfo.lensControls.count(V4L2_CID_FOCUS_ABSOLUTE);
+
 	afAlgo_.configure(context.activeState.af, configInfo.lensControls);
 
 	return 0;
@@ -89,7 +92,7 @@ void Af::process(IPAContext &context,
 		 [[maybe_unused]] const uint32_t frame,
 		 [[maybe_unused]] IPAFrameContext &frameContext,
 		 const SwIspStats *stats,
-		 [[maybe_unused]] ControlList &metadata)
+		 ControlList &metadata)
 {
 	/*
 	 * The statistics are only computed for some frames, the others carry
@@ -105,7 +108,13 @@ void Af::process(IPAContext &context,
 	}
 
 	LOG(IPASoftIspAf, Debug) << "Focus measure: " << *focus;
-	afAlgo_.process(context.activeState.af, *focus);
+
+	constexpr double kMaxFoM = std::numeric_limits<int32_t>::max();
+	metadata.set(controls::FocusFoM,
+		     static_cast<int32_t>(std::min(std::round(*focus), kMaxFoM)));
+
+	if (context.afEnabled)
+		afAlgo_.process(context.activeState.af, *focus);
 }
 
 REGISTER_IPA_ALGORITHM(Af, "Af")
