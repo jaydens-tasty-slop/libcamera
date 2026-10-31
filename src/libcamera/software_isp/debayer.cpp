@@ -282,6 +282,15 @@ Debayer::~Debayer()
  */
 
 /**
+ * \var Debayer::kOutputHeightAlign
+ * \brief Line alignment of the output frame size
+ *
+ * Hardware consumers of the output buffers, such as video encoders, may read
+ * the frame in groups of lines and past its last line. The output frame size
+ * covers the frame height rounded up to a multiple of this number of lines.
+ */
+
+/**
  * \var Debayer::bench_
  * \brief Benchmarking utility instance for performance measurements
  *

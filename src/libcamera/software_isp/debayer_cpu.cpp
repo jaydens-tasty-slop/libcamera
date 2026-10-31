@@ -763,9 +763,13 @@ std::vector<PixelFormat> DebayerCpu::formats(PixelFormat inputFormat)
 std::tuple<unsigned int, unsigned int>
 DebayerCpu::strideAndFrameSize(const PixelFormat &outputFormat, const Size &size)
 {
-	/* round up to multiple of 8 for 64 bits alignment */
+	/*
+	 * round up to multiple of 8 for 64 bits alignment, and the frame size
+	 * to whole groups of kOutputHeightAlign lines
+	 */
 	const PixelFormatInfo &info = PixelFormatInfo::info(outputFormat);
-	return std::make_tuple(info.stride(size.width, 0, 8), info.frameSize(size, 8));
+	return std::make_tuple(info.stride(size.width, 0, 8),
+			       info.frameSize(size.alignedUpTo(1, kOutputHeightAlign), 8));
 }
 
 void DebayerCpuThread::setupInputMemcpy(const uint8_t *linePointers[])

@@ -86,6 +86,8 @@ private:
 	virtual Size patternSize(PixelFormat inputFormat) = 0;
 
 protected:
+	static constexpr unsigned int kOutputHeightAlign = 32;
+
 	void dmaSyncBegin(std::vector<DmaSyncer> &dmaSyncers, FrameBuffer *input, FrameBuffer *output);
 	static bool isStandardBayerOrder(BayerFormat::Order order);
 };

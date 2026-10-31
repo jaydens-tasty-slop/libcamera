@@ -373,9 +373,13 @@ std::vector<PixelFormat> DebayerEGL::formats(PixelFormat inputFormat)
 std::tuple<unsigned int, unsigned int>
 DebayerEGL::strideAndFrameSize(const PixelFormat &outputFormat, const Size &size)
 {
-	/* Align stride to 256 bytes as a generic GPU memory access alignment */
+	/*
+	 * Align stride to 256 bytes as a generic GPU memory access alignment,
+	 * and the frame size to whole groups of kOutputHeightAlign lines.
+	 */
 	const PixelFormatInfo &info = PixelFormatInfo::info(outputFormat);
-	return std::make_tuple(info.stride(size.width, 0, 256), info.frameSize(size, 256));
+	return std::make_tuple(info.stride(size.width, 0, 256),
+			       info.frameSize(size.alignedUpTo(1, kOutputHeightAlign), 256));
 }
 
 uint32_t DebayerEGL::preferredInputStride(const PixelFormat &inputFormat, const Size &size)
