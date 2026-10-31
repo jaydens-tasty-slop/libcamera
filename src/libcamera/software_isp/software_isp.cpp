@@ -443,9 +443,9 @@ void SoftwareIsp::saveIspParams([[maybe_unused]] uint32_t frame)
 	debayerParams_ = *sharedParams_;
 }
 
-void SoftwareIsp::setSensorCtrls(const ControlList &sensorControls)
+void SoftwareIsp::setSensorCtrls(const ControlList &sensorControls, const ControlList &lensControls)
 {
-	setSensorControls.emit(sensorControls);
+	setSensorControls.emit(sensorControls, lensControls);
 }
 
 void SoftwareIsp::statsReady(uint32_t frame, uint32_t bufferId)

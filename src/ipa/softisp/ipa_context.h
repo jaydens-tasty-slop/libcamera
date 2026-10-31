@@ -84,6 +84,7 @@ struct IPAContext {
 
 	IPACameraSensorInfo sensorInfo;
 	ControlInfoMap sensorControls;
+	ControlInfoMap lensControls;
 	std::unique_ptr<CameraSensorHelper> camHelper;
 	IPASessionConfiguration configuration;
 	IPAActiveState activeState;

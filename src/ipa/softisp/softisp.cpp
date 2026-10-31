@@ -27,6 +27,7 @@
 #include "libcamera/internal/yaml_parser.h"
 
 #include "algorithms/adjust.h"
+#include "libipa/af.h"
 #include "libipa/agc.h"
 #include "libipa/camera_sensor_helper.h"
 
@@ -192,6 +193,7 @@ int IPASoftIsp::init(const IPASettings &settings,
 int IPASoftIsp::configure(const IPAConfigInfo &configInfo, ControlInfoMap *ipaControls)
 {
 	context_.sensorControls = configInfo.sensorControls;
+	context_.lensControls = configInfo.lensControls;
 
 	/* Clear the IPA context before the streaming session. */
 	context_.configuration = {};
@@ -256,7 +258,10 @@ void IPASoftIsp::processStats(const uint32_t frame,
 	ControlList ctrls(context_.sensorControls);
 	agc::prepareControls(ctrls, context_.camHelper.get(),
 			     frameContext.agc.exposure, frameContext.agc.gain);
-	setSensorControls.emit(ctrls);
+	ControlList lensCtrls(context_.lensControls);
+	if (context_.afEnabled)
+		af::prepareControls(lensCtrls, context_.activeState.af.focus);
+	setSensorControls.emit(ctrls, lensCtrls);
 }
 
 std::string IPASoftIsp::logPrefix() const
