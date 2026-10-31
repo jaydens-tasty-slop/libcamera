@@ -36,6 +36,7 @@ private:
 						  const SwIspStats *stats);
 
 	AfAlgorithm afAlgo_;
+	bool everyFrame_ = false;
 };
 
 } /* namespace ipa::softisp::algorithms */

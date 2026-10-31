@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <stdint.h>
 
@@ -44,6 +45,10 @@ int Af::configure(IPAContext &context, const IPAConfigInfo &configInfo)
 	context.afEnabled = configInfo.lensControls.count(V4L2_CID_FOCUS_ABSOLUTE);
 
 	afAlgo_.configure(context.activeState.af, configInfo.lensControls);
+
+	/* DEMO ONLY: process every frame like v2 as posted */
+	everyFrame_ = std::getenv("LIBCAMERA_DEMO_AF_EVERY_FRAME");
+	LOG(IPASoftIspAf, Info) << "demo: " << (everyFrame_ ? "every frame (v2 as posted)" : "new statistics only");
 
 	return 0;
 }
@@ -98,7 +103,7 @@ void Af::process(IPAContext &context,
 	 * The statistics are only computed for some frames, the others carry
 	 * the values of an earlier frame.
 	 */
-	if (!stats->valid)
+	if (!stats->valid && !everyFrame_)
 		return;
 
 	std::optional<double> focus = measureFocus(context, stats);
@@ -115,6 +120,12 @@ void Af::process(IPAContext &context,
 
 	if (context.afEnabled)
 		afAlgo_.process(context.activeState.af, *focus);
+
+	LOG(IPASoftIspAf, Debug) << "demo frame " << frame
+				  << (stats->valid ? " new" : " repeat")
+				  << " focus " << *focus
+				  << " lens " << context.activeState.af.focus
+				  << " stable " << context.activeState.af.stable;
 }
 
 REGISTER_IPA_ALGORITHM(Af, "Af")
