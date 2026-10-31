@@ -13,6 +13,8 @@
 
 #include <libcamera/geometry.h>
 
+#include "libipa/af.h"
+
 #include "algorithm.h"
 
 namespace libcamera {
@@ -40,32 +42,9 @@ public:
 		     ControlList &metadata) override;
 
 private:
-	void afCoarseScan(IPAContext &context);
-	void afFineScan(IPAContext &context);
-	bool afScan(IPAContext &context, int min_step);
-	void afReset(IPAContext &context);
-	bool afNeedIgnoreFrame();
-	void afIgnoreFrameReset();
 	double afEstimateVariance(std::span<const y_table_item_t> y_items, bool isY1);
 
-	bool afIsOutOfFocus(IPAContext &context);
-
-	/* VCM step configuration. It is the current setting of the VCM step. */
-	uint32_t focus_;
-	/* The best VCM step. It is a local optimum VCM step during scanning. */
-	uint32_t bestFocus_;
-	/* Current AF statistic variance. */
-	double currentVariance_;
-	/* The frames are ignore before starting measuring. */
-	uint32_t ignoreCounter_;
-	/* It is used to determine the derivative during scanning */
-	double previousVariance_;
-	/* The designated maximum range of focus scanning. */
-	uint32_t maxStep_;
-	/* If the coarse scan completes, it is set to true. */
-	bool coarseCompleted_;
-	/* If the fine scan completes, it is set to true. */
-	bool fineCompleted_;
+	AfAlgorithm afAlgo_;
 };
 
 } /* namespace ipa::ipu3::algorithms */

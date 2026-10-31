@@ -88,22 +88,13 @@ namespace libcamera::ipa::ipu3 {
  */
 
 /**
- * \var IPAActiveState::af
- * \brief Context for the Automatic Focus algorithm
- *
- * \var IPAActiveState::af.focus
- * \brief Current position of the lens
- *
- * \var IPAActiveState::af.maxVariance
- * \brief The maximum variance of the current image
- *
- * \var IPAActiveState::af.stable
- * \brief It is set to true, if the best focus is found
+ * \var IPASessionConfiguration::agc
+ * \brief AGC parameters configuration of the IPA
  */
 
 /**
- * \var IPASessionConfiguration::agc
- * \brief AGC parameters configuration of the IPA
+ * \var IPAActiveState::af
+ * \brief Autofocus state
  */
 
 /**

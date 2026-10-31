@@ -24,6 +24,7 @@
 #include <libipa/fc_queue.h>
 #include <libipa/gamma.h>
 #include <libipa/lsc.h>
+#include "libipa/af.h"
 
 namespace libcamera {
 
@@ -44,12 +45,7 @@ struct IPASessionConfiguration {
 };
 
 struct IPAActiveState {
-	struct {
-		uint32_t focus;
-		double maxVariance;
-		bool stable;
-	} af;
-
+	ipa::af::ActiveState af;
 	agc::ActiveState agc;
 	ipa::awb::ActiveState awb;
 	ipa::ccm::ActiveState ccm;
