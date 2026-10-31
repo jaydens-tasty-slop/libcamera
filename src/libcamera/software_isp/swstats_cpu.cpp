@@ -407,6 +407,7 @@ void SwStatsCpu::startFrame(uint32_t frame)
 	for (auto &s : stats_) {
 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
 		s.numPixels_ = 0;
+		s.variance = 0.0;
 		s.yHistogram.fill(0);
 	}
 }
@@ -425,10 +426,12 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
 	if (valid) {
 		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
 		sharedStats_->numPixels_ = 0;
+		sharedStats_->variance = 0.0;
 		sharedStats_->yHistogram.fill(0);
 		for (const auto &s : stats_) {
 			sharedStats_->sum_ += s.sum_;
 			sharedStats_->numPixels_ += s.numPixels_;
+			sharedStats_->variance += s.variance;
 			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
 				sharedStats_->yHistogram[j] += s.yHistogram[j];
 		}

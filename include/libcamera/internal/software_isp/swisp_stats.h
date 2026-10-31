@@ -17,7 +17,7 @@ namespace libcamera {
 /**
  * \brief Statistics for the Software ISP
  *
- * The software ISP computes two types of statistics:
+ * The software ISP computes the following types of statistics:
  *
  * - The accumulator counts the number of non-saturated pixels and sums their
  *   R, G and B channels individually. Pixels that have any saturated channel
@@ -26,6 +26,8 @@ namespace libcamera {
  *
  * - The histogram groups pixels in bins based on their luminance and counts
  *   the number of pixels in each bin. Saturated pixels are included.
+ *
+ * - The variance value for autofocus.
  *
  * The value types are large enough to not overflow. Should they still overflow
  * for some reason, no check is performed and they wrap around.
@@ -56,6 +58,10 @@ struct SwIspStats {
 	 * \brief A histogram of luminance values of all the sampled pixels
 	 */
 	Histogram yHistogram;
+	/**
+	 * \brief A variance value for the autofocus algorithm
+	 */
+	double variance;
 };
 
 } /* namespace libcamera */
