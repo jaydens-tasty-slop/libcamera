@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "libipa/af.h"
 
 #include "algorithm.h"
@@ -31,6 +33,9 @@ public:
 		     ControlList &metadata) override;
 
 private:
+	static std::optional<double> measureFocus(const IPAContext &context,
+						  const SwIspStats *stats);
+
 	AfAlgorithm afAlgo_;
 };
 

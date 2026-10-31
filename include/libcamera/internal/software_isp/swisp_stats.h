@@ -27,8 +27,6 @@ namespace libcamera {
  * - The histogram groups pixels in bins based on their luminance and counts
  *   the number of pixels in each bin. Saturated pixels are included.
  *
- * - The variance value for autofocus.
- *
  * - The focus statistics divide the statistics window in a grid of regions
  *   and measure the high frequency content of the green channel in each of
  *   them, for use by contrast detection autofocus algorithms.
@@ -62,10 +60,6 @@ struct SwIspStats {
 	 * \brief A histogram of luminance values of all the sampled pixels
 	 */
 	Histogram yHistogram;
-	/**
-	 * \brief A variance value for the autofocus algorithm
-	 */
-	double variance;
 	/**
 	 * \brief Number of columns in the focus statistics grid
 	 */
